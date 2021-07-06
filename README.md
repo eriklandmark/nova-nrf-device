@@ -1,1 +1,1 @@
-# nova-nrf-device-
+# nova-nrf-device
