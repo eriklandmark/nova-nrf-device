@@ -1,0 +1,22 @@
+{
+  "name": "nrf-device",
+  "version": "1.0.0",
+  "description": "",
+  "main": "nrf_radio_test.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eriklandmark/nova-nrf-device.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/eriklandmark/nova-nrf-device/issues"
+  },
+  "homepage": "https://github.com/eriklandmark/nova-nrf-device#readme",
+  "dependencies": {
+    "nrf": "^0.8.3"
+  }
+}
