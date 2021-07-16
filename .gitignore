@@ -1,3 +1,8 @@
+arduino_sketches/nrf-radio-proxy/radio.ino
+arduino_sketches/nrf-radio-proxy/types.h
+arduino_sketches/nrf-radio-test/radio.ino
+arduino_sketches/nrf-radio-test/types.h
+
 # Logs
 logs
 *.log
