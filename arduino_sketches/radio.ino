@@ -3,12 +3,12 @@
 #include "RF24.h"
 
 #define RADIO_CHANNEL 100
-#define CE_PIN 8
-#define CSN_PIN 9
+#define CE_PIN 2
+#define CSN_PIN 3
 #define IRQ_PIN 7
 #define RADIO_POWER RF24_PA_MIN
 
-RF24 radio(8, 9);
+RF24 radio(CE_PIN, CSN_PIN);
 
 unsigned long latest_time = millis();
 
@@ -97,11 +97,6 @@ void radioEvent() {
                 if (DEBUG) {
                     Serial.print("[EVENT] - PONG - UID: ");
                     Serial.println(result.uid);
-                }
-            } else if (result.event == PING) {
-                if (DEBUG) {
-                   Serial.print("[EVENT] - PING - UID: ");
-                   Serial.println(result.uid);
                 }
             } else if (result.event == SET_STATE) {
                 handleSetStateEvent(result.state_data);

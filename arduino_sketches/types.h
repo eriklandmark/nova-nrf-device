@@ -1,5 +1,7 @@
+int NUM_STATE_DATA_PACKETS = 4;
+
 enum DeviceType {
-    NRF_PROXY,
+    GATEWAY,
     IRRIGATION_STATION,
     OUTLET
 };
@@ -21,13 +23,13 @@ enum StateType {
 };
 
 struct StateData {
-    byte state_type;
-    short state_data;
+    byte type;
+    short data;
 };
 
 struct DataPayload {
     byte uid;
     byte device_type;
     EventType event;
-    StateData state_data[8];
+    StateData state_data[4];
 };
