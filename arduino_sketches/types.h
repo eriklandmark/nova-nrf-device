@@ -1,4 +1,4 @@
-int NUM_STATE_DATA_PACKETS = 4;
+size_t NUM_STATE_DATA_PACKETS = 4;
 
 enum DeviceType {
     GATEWAY,
@@ -11,19 +11,27 @@ enum EventType {
     PONG,
     OK,
     ERROR,
-    SCAN,
     SET_STATE,
-    GET_STATE
+    GET_STATE,
+    DEVICES
 };
 
-enum StateType {
+enum DataType {
     NO_STATE,
+    ERROR_CODE,
+    DEVICE,
     ON_OFF,
     SOIL_MOISTURE
 };
 
-struct StateData {
-    byte type;
+enum ErrorCodes {
+    RADIO_ERROR,
+    NODE_NOT_CONNECTED,
+    NODE_NOT_RESPONDING,
+};
+
+struct DataPacket {
+    DataType type;
     short data;
 };
 
@@ -31,5 +39,5 @@ struct DataPayload {
     byte uid;
     byte device_type;
     EventType event;
-    StateData state_data[4];
+    DataPacket data[4];
 };

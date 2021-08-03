@@ -1,3 +1,4 @@
+#include "ArduinoJson.h"
 #include "RF24.h"
 #include "RF24Network.h"
 #include "RF24Mesh.h"
@@ -7,11 +8,13 @@
 
 #define DEBUG false
 
-#define DEVICE_ID 1
+#define DEVICE_ID 0
 #define DEVICE_TYPE GATEWAY
-#define PING_INTERVAL 15 // Seconds
 
 #define NETWORK_CHANNEL 100
+#define NETWORK_SPEED RF24_250KBPS
+
+#define OUTPUT_SERIAL Serial //Serial1
 
 RF24 radio(2, 3);
 RF24Network network(radio);
@@ -19,7 +22,7 @@ RF24Mesh mesh(radio, network);
 
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
-    Serial1.begin(9600);
+    OUTPUT_SERIAL.begin(9600);
 
     if (DEBUG) {
         Serial.begin(9600);
@@ -30,68 +33,114 @@ void setup() {
             delay(100);
         }
 
-        Serial.println("Starting nrf-proxy-radio");
+        Serial.println("Starting nrf-gateway");
     }
 
     if (DEBUG) {
         Serial.println("Setting up radio.");
     }
 
-    Serial1.println("Starting up!");
+    mesh.setNodeID(DEVICE_ID);
+    mesh.begin(NETWORK_CHANNEL, NETWORK_SPEED);
 
-    mesh.setNodeID(0);
-    mesh.begin(NETWORK_CHANNEL, RF24_250KBPS);
-
-    while (!Serial) {
-        digitalWrite(LED_BUILTIN, HIGH);
-        delay(100);
-        digitalWrite(LED_BUILTIN, LOW);
-        delay(100);
+    if (DEBUG) {
+        if (radio.isChipConnected()) {
+            Serial.println("Radio is connected!");
+        } else {
+            Serial.println("Radio is not connected!");
+            sendErrorToPi(RADIO_ERROR);
+        }
     }
-}
-
-bool sendPayload(uint16_t node, const EventType event_type, StateData state_data_var[] = {}) {
-    DataPayload payload = {DEVICE_ID, DEVICE_TYPE, event_type};
-    byte state_packets = int(sizeof(*state_data_var) / sizeof(StateData));
-
-    for (short i = 0; i < state_packets; i++) {
-        payload.state_data[i] = state_data_var[i];
-    }
-
-    for (short i = state_packets; i < NUM_STATE_DATA_PACKETS; i++) {
-        payload.state_data[i] = {0,0};
-    }
-
-    bool result = mesh.write(&payload, 'M', sizeof(payload), node);
-
-    if (!result) {
-        Serial1.print("Error sending to node: ");
-        Serial1.println(node);
-    }
-
-    return result;
 }
 
 void sendEventToPi(DataPayload payload) {
-    Serial1.print(payload.uid);
-    Serial1.print(":");
-    Serial1.print(payload.event);
-    Serial1.print(":");
-    for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
-        Serial1.print(payload.state_data[i].type);
-        Serial1.print("|");
-        Serial1.print(payload.state_data[i].data);
-        Serial1.print(",");
+    StaticJsonDocument<256> doc;
+    doc["event"] = payload.event;
+    doc["uid"] = payload.uid;
+    JsonArray data = doc["data"].to<JsonArray>();
+    if (payload.event == DEVICES) {
+        for (short i = 0; i < mesh.addrListTop; i++) {
+            JsonObject nested = data.createNestedObject();
+            nested["type"] = DEVICE;
+            nested["data"] = mesh.addrList[i].nodeID;
+        }
+    } else if (payload.event != PONG && payload.event != OK && payload.event != PING) {
+        for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
+            if (payload.data[i].type) {
+                JsonObject nested = data.createNestedObject();
+                nested["type"] = payload.data[i].type;
+                nested["data"] = payload.data[i].data;
+            }
+        }
+    } else if (payload.event == ERROR) {
+        JsonObject nested = data.createNestedObject();
+        nested["type"] = ERROR_CODE;
+        nested["data"] = payload.data[0].data;
     }
-    Serial1.println("");
+
+    char serialized_data[256];
+    serializeJson(doc, serialized_data);
+    OUTPUT_SERIAL.println(serialized_data);
 }
 
-unsigned long last_ping = millis();
-unsigned long last_state_test = millis();
-unsigned long last_display_nodes = millis();
-bool last_state = true;
+void sendErrorToPi(const ErrorCodes error_code) {
+    DataPayload payload = {DEVICE_ID, DEVICE_TYPE, ERROR};
+    payload.data[0] = {ERROR_CODE, (short) error_code};
+    sendEventToPi(payload);
+}
 
-String msg = "";
+bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], const size_t data_length = NUM_STATE_DATA_PACKETS) {
+    bool exists_in_list = false;
+    for (byte i = 0; i < mesh.addrListTop; i++) {
+        if (mesh.addrList[i].nodeID == node) {
+            exists_in_list = true;
+            break;
+        }
+    }
+
+    if (exists_in_list) {
+        DataPayload payload = {DEVICE_ID, DEVICE_TYPE, event};
+
+        if (data_length == 0) {
+            for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
+                payload.data[i] = {NO_STATE,0};
+            }
+        } else {
+            for (short i = 0; i < data_length; i++) {
+                payload.data[i] = data_var[i];
+            }
+
+            for (short i = data_length; i < NUM_STATE_DATA_PACKETS; i++) {
+                payload.data[i] = {NO_STATE,0};
+            }
+        }
+
+
+        bool result = mesh.write(&payload, 'M', sizeof(payload), node);
+
+        if (!result) {
+            if (DEBUG) {
+                Serial.print("Error sending to node: ");
+                Serial.println(node);
+            }
+
+            sendErrorToPi(NODE_NOT_RESPONDING);
+        }
+        return result;
+    } else {
+        if (DEBUG) {
+            Serial.print("[RADIO] Node ");
+            Serial.print(node);
+            Serial.println(" is not connected!");
+        }
+        sendErrorToPi(NODE_NOT_CONNECTED);
+        return false;
+    }
+}
+
+char raw_serial_data[53];
+size_t raw_serial_data_length = 0;
+StaticJsonDocument<256> serial_data;
 bool msg_done = false;
 
 void loop() {
@@ -106,86 +155,104 @@ void loop() {
             DataPayload result;
             network.read(header, &result, sizeof(result));
 
-            if (result.event == PONG) {
+            if (result.event == PING) {
                 if (DEBUG) {
-                    Serial.print("[EVENT] - PONG - UID: ");
+                    Serial.print("[RADIO EVENT] - PING - UID: ");
+                    Serial.println(result.uid);
+                }
+
+                bool exists_in_list = false;
+                for (short i = 0; i < mesh.addrListTop; i++) {
+                    if (mesh.addrList[i].nodeID == result.uid) {
+                        exists_in_list = true;
+                        break;
+                    }
+                }
+
+                if (exists_in_list) {
+                    result.event = PONG;
+                    sendEventToPi(result);
+                    sendPayload(result.uid, PONG, {}, 0);
+                }
+            } else if (result.event == PONG) {
+                if (DEBUG) {
+                    Serial.print("[RADIO EVENT] - PONG - UID: ");
                     Serial.println(result.uid);
                 }
                 sendEventToPi(result);
             } else if (result.event == GET_STATE) {
                 if (DEBUG) {
-                    Serial.print("[EVENT] - GET_STATE - UID: ");
+                    Serial.print("[RADIO EVENT] - GET_STATE - UID: ");
                     Serial.println(result.uid);
                 }
-
-                bool has_data = false;
-                for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
-                    if (result.state_data[i].type != NO_STATE) {
-                        has_data = true;
-                        break;
-                    }
-                }
-
-                if (has_data) {
-                    // GET_STATE Response:
-                    sendEventToPi(result);
-                }
+                sendEventToPi(result);
             }
         } else {
             network.read(header, 0, 0);
 
             if (DEBUG) {
-                Serial.print("[EVENT] - UNKNOWN - ");
+                Serial.print("[RADIO EVENT] - UNKNOWN - ");
                 Serial.println(header.type);
             }
         }
     }
 
-    while (Serial1.available() > 0) {
-        char c = Serial1.read();
+    while (OUTPUT_SERIAL.available() > 0) {
+        char c = OUTPUT_SERIAL.read();
 
         if (c == '<') {
             msg_done = false;
         } else if (c == '>') {
             msg_done = true;
         } else {
-            msg += c;
+            raw_serial_data[raw_serial_data_length] = c;
+            raw_serial_data_length++;
         }
     }
 
-    if (msg.length() > 0 && msg_done) {
-        Serial1.print("Got from serial: ");
-        Serial1.println(msg);
-        msg = "";
-    }
+    if (raw_serial_data_length > 0 && msg_done) {
+        deserializeJson(serial_data, raw_serial_data, raw_serial_data_length);
 
-    unsigned long current_millis = millis();
+        if ((byte) serial_data["event"] == PING) {
+            DataPayload pong_payload = {0,0,PONG};
 
-    if(current_millis - last_display_nodes >= 10000){
-        last_display_nodes = current_millis;
-
-        Serial1.println(F("**NODES**"));
-        for(int i = 0; i< mesh.addrListTop; i++){
-            Serial1.print("Node: ");
-            Serial1.print(mesh.addrList[i].nodeID);
-            Serial1.print(" : ");
-            Serial1.println(mesh.addrList[i].address, OCT);
-        }
-        Serial1.println(F("*********"));
-    }
-
-    if (current_millis - last_ping >= 1000 * PING_INTERVAL) {
-        last_ping = current_millis;
-
-        if (mesh.addrListTop > 0) {
+            sendEventToPi(pong_payload);
             if (DEBUG) {
-                Serial.println("Sending ping command!");
+                Serial.println("[SERIAL EVENT] - PING");
+            }
+        } else if ((byte) serial_data["event"] == DEVICES) {
+            DataPayload devices_payload = {0,0,DEVICES};
+            sendEventToPi(devices_payload);
+
+            if (DEBUG) {
+                Serial.println("[SERIAL EVENT] - DEVICES");
+            }
+        } else if ((byte) serial_data["event"] == GET_STATE) {
+            sendPayload((uint16_t) serial_data["uid"], GET_STATE, {}, 0);
+
+            if (DEBUG) {
+                Serial.print("[SERIAL EVENT] - GET_STATE - ");
+                Serial.println((byte) serial_data["uid"]);
+            }
+        } else if ((byte) serial_data["event"] == SET_STATE) {
+            if (DEBUG) {
+                Serial.print("[SERIAL EVENT] - SET_STATE - ");
+                Serial.println((byte) serial_data["uid"]);
             }
 
-            Serial1.println("Sending ping command!");
-            for(int i = 0; i< mesh.addrListTop; i++){
-                sendPayload((uint16_t) mesh.addrList[i].nodeID, PING);
+            size_t num_packets = serial_data["data"].size();
+            DataPacket state_data[num_packets];
+
+            for (byte i = 0; i < num_packets; i++) {
+                if ((byte) serial_data["data"][i]["type"] > DEVICE) {
+                    state_data[i].type = (byte) serial_data["data"][i]["type"];
+                    state_data[i].data = (short) serial_data["data"][i]["data"];
+                }
             }
+
+            sendPayload((uint16_t) serial_data["uid"], SET_STATE, state_data, num_packets);
         }
+
+        raw_serial_data_length = 0;
     }
 }
