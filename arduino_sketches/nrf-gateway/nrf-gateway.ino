@@ -83,8 +83,8 @@ void sendEventToPi(DataPayload payload) {
     OUTPUT_SERIAL.println(serialized_data);
 }
 
-void sendErrorToPi(const ErrorCodes error_code) {
-    DataPayload payload = {DEVICE_ID, DEVICE_TYPE, ERROR};
+void sendErrorToPi(const ErrorCodes error_code, const uint16_t node = DEVICE_ID) {
+    DataPayload payload = {(byte) node, DEVICE_TYPE, ERROR};
     payload.data[0] = {ERROR_CODE, (short) error_code};
     sendEventToPi(payload);
 }
@@ -124,7 +124,7 @@ bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], co
                 Serial.println(node);
             }
 
-            sendErrorToPi(NODE_NOT_RESPONDING);
+            sendErrorToPi(NODE_NOT_RESPONDING, node);
         }
         return result;
     } else {
@@ -133,7 +133,7 @@ bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], co
             Serial.print(node);
             Serial.println(" is not connected!");
         }
-        sendErrorToPi(NODE_NOT_CONNECTED);
+        sendErrorToPi(NODE_NOT_CONNECTED, node);
         return false;
     }
 }
