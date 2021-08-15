@@ -28,6 +28,7 @@ enum ErrorCodes {
     RADIO_ERROR,
     NODE_NOT_CONNECTED,
     NODE_NOT_RESPONDING,
+    GATEWAY_WRONG_RESPONSE
 };
 
 struct DataPacket {

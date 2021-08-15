@@ -11,9 +11,9 @@
 
 #define DEVICE_ID 1
 #define DEVICE_TYPE IRRIGATION_STATION
-#define OUTPUT_PIN LED_BUILTIN
+#define OUTPUT_PIN 4
 
-#define PING_INTERVAL 30 // Seconds
+#define PING_INTERVAL 300000 // Seconds
 
 #define NETWORK_CHANNEL 100
 RF24 radio(2, 3);
@@ -21,8 +21,8 @@ RF24Network network(radio);
 RF24Mesh mesh(radio, network);
 
 void setup() {
-    pinMode(9, OUTPUT);
     pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(OUTPUT_PIN, OUTPUT);
 
     if (DEBUG) {
         Serial.begin(9600);
@@ -35,11 +35,9 @@ void setup() {
         Serial.println("Starting nrf-device!");
     }
 
-    pinMode(OUTPUT_PIN, OUTPUT);
-
+    radio.setPALevel(RF24_PA_MAX);
     mesh.setNodeID(DEVICE_ID);
     mesh.begin(NETWORK_CHANNEL, RF24_250KBPS);
-    radio.setPALevel(RF24_PA_MIN);
 
     if (!radio.isChipConnected()) {
         if (DEBUG) {
@@ -47,8 +45,9 @@ void setup() {
         }
     } else {
         if (DEBUG) {
-            printf_begin();
-            radio.printPrettyDetails();
+            //printf_begin();
+            //radio.printPrettyDetails();
+            Serial.println("Radio is connected!");
         }
     }
 }
@@ -121,14 +120,22 @@ void loop() {
 
     unsigned long current_millis = millis();
 
-    if(current_millis - last_ping >= PING_INTERVAL*1000 && received_pong){
+    if(current_millis - last_ping > PING_INTERVAL && received_pong){
         last_ping = current_millis;
 
         if (!radio.isChipConnected()) {
             if (DEBUG) {
                 Serial.println("Radio is not connected!");
             }
+        } else if (!mesh.checkConnection()) {
+            if (DEBUG) {
+                Serial.println("Connection to network not ok!");
+            }
+            rejoinNetwork(false);
         } else {
+            if (DEBUG) {
+                Serial.println("Sending ping!");
+            }
             received_pong = !sendPayload(0, PING);
             last_pong = current_millis;
         }
@@ -171,6 +178,7 @@ void loop() {
                     }
                     if (result.data[i].type == ON_OFF) {
                         digitalWrite(OUTPUT_PIN, result.data[i].data);
+                        digitalWrite(LED_BUILTIN, result.data[i].data);
 
                         short state = digitalRead(OUTPUT_PIN);
                         DataPacket state_data[1];
