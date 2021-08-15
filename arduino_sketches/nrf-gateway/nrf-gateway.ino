@@ -11,7 +11,7 @@
 #define DEVICE_ID 0
 #define DEVICE_TYPE GATEWAY
 
-#define NETWORK_CHANNEL 100
+#define NETWORK_CHANNEL 1
 #define NETWORK_SPEED RF24_250KBPS
 #define RADIO_POWER RF24_PA_MAX
 
@@ -78,9 +78,9 @@ void setup() {
         Serial.println("Setting up radio.");
     }
 
-    radio.setPALevel(RADIO_POWER);
     mesh.setNodeID(DEVICE_ID);
     mesh.begin(NETWORK_CHANNEL, NETWORK_SPEED);
+    radio.setPALevel(RADIO_POWER);
 
     if (DEBUG) {
         if (radio.isChipConnected()) {

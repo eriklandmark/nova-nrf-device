@@ -15,7 +15,10 @@
 
 #define PING_INTERVAL 300000 // Seconds
 
-#define NETWORK_CHANNEL 100
+#define NETWORK_CHANNEL 1
+#define NETWORK_SPEED RF24_250KBPS
+#define RADIO_POWER RF24_PA_MAX
+
 RF24 radio(2, 3);
 RF24Network network(radio);
 RF24Mesh mesh(radio, network);
@@ -35,9 +38,9 @@ void setup() {
         Serial.println("Starting nrf-device!");
     }
 
-    radio.setPALevel(RF24_PA_MAX);
     mesh.setNodeID(DEVICE_ID);
-    mesh.begin(NETWORK_CHANNEL, RF24_250KBPS);
+    mesh.begin(NETWORK_CHANNEL, NETWORK_SPEED);
+    radio.setPALevel(RADIO_POWER);
 
     if (!radio.isChipConnected()) {
         if (DEBUG) {
@@ -80,16 +83,15 @@ bool rejoinNetwork(const bool full) {
     }
 }
 
-bool sendPayload(uint16_t node, const EventType event_type, DataPacket state_data_var[] = {}) {
+bool sendPayload(uint16_t node, const EventType event_type, DataPacket state_data_var[] = {}, size_t num_packets = 0) {
     DataPayload payload = {DEVICE_ID, DEVICE_TYPE, event_type};
-    byte state_packets = int(sizeof(*state_data_var) / sizeof(DataPacket));
 
-    for (short i = 0; i < state_packets; i++) {
+    for (short i = 0; i < num_packets; i++) {
         payload.data[i] = state_data_var[i];
     }
 
-    for (short i = state_packets; i < NUM_STATE_DATA_PACKETS; i++) {
-        payload.data[i] = {NO_STATE,0};
+    for (short i = num_packets; i < NUM_STATE_DATA_PACKETS; i++) {
+        payload.data[i] = {NO_STATE, 0};
     }
 
     bool result = mesh.write(&payload, 'M', sizeof(payload), node);
@@ -106,6 +108,17 @@ bool sendPayload(uint16_t node, const EventType event_type, DataPacket state_dat
     }
 
     return result;
+}
+
+size_t handleGetState(state_data) {
+    if (DEVICE_TYPE == OUTLET) {
+        state_data[0] = {ON_OFF, (short) digitalRead(OUTPUT_PIN)};
+        return 1;
+    } else if (DEVICE_TYPE == IRRIGATION_STATION) {
+        return 0;
+    } else {
+        return 0;
+    }
 }
 
 
@@ -183,7 +196,7 @@ void loop() {
                         short state = digitalRead(OUTPUT_PIN);
                         DataPacket state_data[1];
                         state_data[0] = {ON_OFF, state};
-                        sendPayload(0, GET_STATE, state_data);
+                        sendPayload(0, GET_STATE, state_data, 1);
                     }
                 }
             }
@@ -204,9 +217,9 @@ void loop() {
             if (!has_data) {
                 // GET_STATE Request:
                 short state = digitalRead(OUTPUT_PIN);
-                DataPacket state_data[1];
-                state_data[0] = {ON_OFF, state};
-                sendPayload(0, GET_STATE, state_data);
+                DataPacket state_data[NUM_STATE_DATA_PACKETS];
+                size_t num_packets = handleGetState(state_data);
+                sendPayload(0, GET_STATE, state_data, num_packets);
             }
 
             if (DEBUG) {
