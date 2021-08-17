@@ -1,5 +1,6 @@
 arduino_sketches/nrf-gateway/types.h
 arduino_sketches/nrf-device/types.h
+arduino_sketches/nrf-repeater/types.h
 
 # Logs
 logs
