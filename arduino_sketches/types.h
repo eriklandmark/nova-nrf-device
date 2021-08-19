@@ -3,7 +3,8 @@ size_t NUM_STATE_DATA_PACKETS = 4;
 enum DeviceType {
     GATEWAY,
     IRRIGATION_STATION,
-    OUTLET
+    OUTLET,
+    REPEATER
 };
 
 enum EventType {
