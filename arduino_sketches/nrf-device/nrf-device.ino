@@ -5,15 +5,17 @@
 #include "types.h"
 #include "printf.h"
 #include <EEPROM.h>
+#include <SoftwareReset.h>
+
+#define DEVICE_ID 1
+#define DEVICE_TYPE OUTLET
+#define OUTPUT_PIN 4
 
 #define DEBUG false
 #define ACTIVATE_BLINK false
 
-#define DEVICE_ID 1
-#define DEVICE_TYPE IRRIGATION_STATION
-#define OUTPUT_PIN 4
-
-#define PING_INTERVAL 300000 // Seconds
+#define PING_INTERVAL 60000 // Seconds
+#define MAX_FAIL_BEFORE_RESET 5
 
 #define NETWORK_CHANNEL 1
 #define NETWORK_SPEED RF24_250KBPS
@@ -23,9 +25,12 @@ RF24 radio(2, 3);
 RF24Network network(radio);
 RF24Mesh mesh(radio, network);
 
+byte ping_fail_count = 0;
+
 void setup() {
-    pinMode(LED_BUILTIN, OUTPUT);
-    pinMode(OUTPUT_PIN, OUTPUT);
+    if (ACTIVATE_BLINK) {
+        pinMode(LED_BUILTIN, OUTPUT);
+    }
 
     if (DEBUG) {
         Serial.begin(9600);
@@ -35,7 +40,7 @@ void setup() {
             digitalWrite(LED_BUILTIN, LOW);
             delay(100);
         }
-        Serial.println("Starting nrf-device!");
+        Serial.println("[INFO] Starting nrf-device!");
     }
 
     mesh.setNodeID(DEVICE_ID);
@@ -44,26 +49,35 @@ void setup() {
 
     if (!radio.isChipConnected()) {
         if (DEBUG) {
-            Serial.println("Radio is not connected!");
+            Serial.println("[ERROR] Radio is not connected!");
         }
     } else {
         if (DEBUG) {
             //printf_begin();
             //radio.printPrettyDetails();
-            Serial.println("Radio is connected!");
+            Serial.println("[INFO] Radio is connected!");
+            if (mesh.checkConnection()) {
+                Serial.println("[INFO] Connected to network!");
+            } else {
+                Serial.println("[ERROR] Not connected to network!");
+            }
         }
+    }
+
+    if (DEVICE_TYPE == OUTLET) {
+        pinMode(OUTPUT_PIN, OUTPUT);
     }
 }
 
 bool rejoinNetwork(const bool full) {
     if (!mesh.checkConnection()) {
         if (DEBUG) {
-            Serial.println("[RADIO] Renewing Address");
+            Serial.println("[ERROR] No connection to network. Renewing Address.");
         }
 
         if(!mesh.renewAddress()){
             if (DEBUG) {
-                Serial.println("[RADIO] Failed to renew address");
+                Serial.println("[ERROR] Failed to renew address");
             }
 
             if (full) {
@@ -77,7 +91,7 @@ bool rejoinNetwork(const bool full) {
         }
     } else {
         if (DEBUG) {
-            Serial.println("[RADIO] Connection to network ok!");
+            Serial.println("[INFO] Connection to network ok!");
         }
         return true;
     }
@@ -97,20 +111,22 @@ bool sendPayload(uint16_t node, const EventType event_type, DataPacket state_dat
     bool result = mesh.write(&payload, 'M', sizeof(payload), node);
     if (!result) {
         if (DEBUG) {
-            Serial.println("[RADIO] Renewing Address");
+            Serial.print("[ERROR] Send event ");
+            Serial.print(event_type);
+            Serial.println(" failed!");
         }
 
         rejoinNetwork(true);
     } else {
         if (DEBUG) {
-            Serial.println("Send OK!");
+            Serial.println("[INFO] Send OK!");
         }
     }
 
     return result;
 }
 
-size_t handleGetState(state_data) {
+size_t handleGetState(DataPacket* state_data) {
     if (DEVICE_TYPE == OUTLET) {
         state_data[0] = {ON_OFF, (short) digitalRead(OUTPUT_PIN)};
         return 1;
@@ -121,6 +137,12 @@ size_t handleGetState(state_data) {
     }
 }
 
+void handleSetState(DataPayload result, short i) {
+    if (DEVICE_TYPE == OUTLET && result.data[i].type == ON_OFF) {
+        digitalWrite(OUTPUT_PIN, result.data[i].data);
+        digitalWrite(LED_BUILTIN, result.data[i].data);
+    }
+}
 
 unsigned long last_ping = millis();
 unsigned long last_pong = millis();
@@ -138,16 +160,16 @@ void loop() {
 
         if (!radio.isChipConnected()) {
             if (DEBUG) {
-                Serial.println("Radio is not connected!");
+                Serial.println("[ERROR] Radio is not connected!");
             }
         } else if (!mesh.checkConnection()) {
             if (DEBUG) {
-                Serial.println("Connection to network not ok!");
+                Serial.println("[ERROR] Connection to network not ok!");
             }
             rejoinNetwork(false);
         } else {
             if (DEBUG) {
-                Serial.println("Sending ping!");
+                Serial.println("[INFO] Sending ping!");
             }
             received_pong = !sendPayload(0, PING);
             last_pong = current_millis;
@@ -156,8 +178,17 @@ void loop() {
 
     if(current_millis - last_pong >= 1000 && !received_pong) {
         last_pong = current_millis;
-        if (DEBUG) {
-            Serial.println("PONG TIMEOUT! Trying to renew address!");
+
+        if (ping_fail_count >= MAX_FAIL_BEFORE_RESET) {
+            if (DEBUG) {
+                Serial.println("[ERROR] PONG TIMEOUT! Max fails reached, resetting!");
+            }
+            softwareReset::standard();
+        } else {
+            if (DEBUG) {
+                Serial.println("[ERROR] PONG TIMEOUT! Trying to renew address!");
+            }
+            ping_fail_count += 1;
         }
 
         received_pong = rejoinNetwork(false);
@@ -179,32 +210,30 @@ void loop() {
                Serial.print("[EVENT] - PONG - UID: ");
                Serial.println(result.uid);
            }
+           ping_fail_count = 0;
            received_pong = true;
         } else if (result.event == SET_STATE) {
-            for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
-                if (result.data[i].type != NO_STATE) {
-                    if (DEBUG) {
-                        Serial.print("STATE: ");
-                        Serial.print(result.data[i].type);
-                        Serial.print(":");
-                        Serial.println(result.data[i].data);
-                    }
-                    if (result.data[i].type == ON_OFF) {
-                        digitalWrite(OUTPUT_PIN, result.data[i].data);
-                        digitalWrite(LED_BUILTIN, result.data[i].data);
-
-                        short state = digitalRead(OUTPUT_PIN);
-                        DataPacket state_data[1];
-                        state_data[0] = {ON_OFF, state};
-                        sendPayload(0, GET_STATE, state_data, 1);
-                    }
-                }
-            }
-
             if (DEBUG) {
                 Serial.print("[EVENT] - SET_STATE - UID: ");
                 Serial.println(result.uid);
             }
+
+            for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
+                if (result.data[i].type != NO_STATE) {
+                    if (DEBUG) {
+                        Serial.print("[EVENT] STATE: ");
+                        Serial.print(result.data[i].type);
+                        Serial.print(":");
+                        Serial.println(result.data[i].data);
+                    }
+
+                    handleSetState(result, i);
+                }
+            }
+
+            DataPacket state_data[NUM_STATE_DATA_PACKETS];
+            size_t num_packets = handleGetState(state_data);
+            sendPayload(0, GET_STATE, state_data, num_packets);
         } else if (result.event == GET_STATE) {
             bool has_data = false;
             for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
@@ -215,8 +244,6 @@ void loop() {
             }
 
             if (!has_data) {
-                // GET_STATE Request:
-                short state = digitalRead(OUTPUT_PIN);
                 DataPacket state_data[NUM_STATE_DATA_PACKETS];
                 size_t num_packets = handleGetState(state_data);
                 sendPayload(0, GET_STATE, state_data, num_packets);
@@ -224,7 +251,7 @@ void loop() {
 
             if (DEBUG) {
                 Serial.print("[EVENT] - GET_STATE_REQUEST - UID: ");
-                Serial.println(has_data);
+                Serial.println(result.uid);
             }
         }
     }

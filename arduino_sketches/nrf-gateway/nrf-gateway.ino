@@ -21,10 +21,45 @@ RF24 radio(2, 3);
 RF24Network network(radio);
 RF24Mesh mesh(radio, network);
 
+void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+    OUTPUT_SERIAL.begin(9600);
+
+    if (DEBUG) {
+        Serial.begin(9600);
+        while (!Serial) {
+            digitalWrite(LED_BUILTIN, HIGH);
+            delay(100);
+            digitalWrite(LED_BUILTIN, LOW);
+            delay(100);
+        }
+
+        Serial.println("[RADIO] Starting nrf-gateway");
+    }
+
+    if (DEBUG) {
+        Serial.println("[RADIO] Setting up radio.");
+    }
+
+    mesh.setNodeID(DEVICE_ID);
+    mesh.begin(NETWORK_CHANNEL, NETWORK_SPEED);
+    radio.setPALevel(RADIO_POWER);
+
+    if (DEBUG) {
+        if (radio.isChipConnected()) {
+            Serial.println("[RADIO] Radio is connected!");
+        } else {
+            Serial.println("[RADIO] Radio is not connected!");
+            sendErrorToPi(0, RADIO_ERROR);
+        }
+    }
+}
+
 void sendEventToPi(const unsigned short msg_id, DataPayload payload) {
     StaticJsonDocument<256> doc;
     doc["e"] = payload.event;
     doc["u"] = payload.uid;
+    doc["t"] = payload.device_type;
     doc["i"] = msg_id;
     JsonArray data = doc["d"].to<JsonArray>();
     if (payload.event == DEVICES) {
@@ -33,7 +68,7 @@ void sendEventToPi(const unsigned short msg_id, DataPayload payload) {
             nested["t"] = DEVICE;
             nested["d"] = mesh.addrList[i].nodeID;
         }
-    } else if (payload.event != PONG && payload.event != OK && payload.event != PING) {
+    } else if (payload.event != PONG && payload.event != OK && payload.event != PING && payload.device_type != REPEATER) {
         for (short i = 0; i < NUM_STATE_DATA_PACKETS; i++) {
             if (payload.data[i].type) {
                 JsonObject nested = data.createNestedObject();
@@ -56,40 +91,6 @@ void sendErrorToPi(const unsigned short msg_id, const ErrorCodes error_code, con
     DataPayload payload = {(byte) node, DEVICE_TYPE, ERROR};
     payload.data[0] = {ERROR_CODE, (short) error_code};
     sendEventToPi(msg_id, payload);
-}
-
-void setup() {
-    pinMode(LED_BUILTIN, OUTPUT);
-    OUTPUT_SERIAL.begin(9600);
-
-    if (DEBUG) {
-        Serial.begin(9600);
-        while (!Serial) {
-            digitalWrite(LED_BUILTIN, HIGH);
-            delay(100);
-            digitalWrite(LED_BUILTIN, LOW);
-            delay(100);
-        }
-
-        Serial.println("Starting nrf-gateway");
-    }
-
-    if (DEBUG) {
-        Serial.println("Setting up radio.");
-    }
-
-    mesh.setNodeID(DEVICE_ID);
-    mesh.begin(NETWORK_CHANNEL, NETWORK_SPEED);
-    radio.setPALevel(RADIO_POWER);
-
-    if (DEBUG) {
-        if (radio.isChipConnected()) {
-            Serial.println("Radio is connected!");
-        } else {
-            Serial.println("Radio is not connected!");
-            sendErrorToPi(0, RADIO_ERROR);
-        }
-    }
 }
 
 bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], const size_t data_length, const unsigned short msg_id) {
@@ -122,7 +123,7 @@ bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], co
 
         if (!result) {
             if (DEBUG) {
-                Serial.print("Error sending to node: ");
+                Serial.print("[RADIO][ERROR] Error sending to node: ");
                 Serial.println(node);
             }
 
@@ -131,7 +132,7 @@ bool sendPayload(uint16_t node, const EventType event, DataPacket data_var[], co
         return result;
     } else {
         if (DEBUG) {
-            Serial.print("[RADIO] Node ");
+            Serial.print("[RADIO][ERROR] Node ");
             Serial.print(node);
             Serial.println(" is not connected!");
         }
@@ -173,8 +174,8 @@ void loop() {
 
                 if (exists_in_list) {
                     result.event = PONG;
-                    sendEventToPi(0, result);
                     sendPayload(result.uid, PONG, {}, 0, 0);
+                    sendEventToPi(0, result);
                 }
             } else if (result.event == PONG) {
                 if (DEBUG) {
@@ -216,14 +217,16 @@ void loop() {
         deserializeJson(serial_data, raw_serial_data, raw_serial_data_length);
 
         if ((byte) serial_data["e"] == PING) {
-            DataPayload pong_payload = {0,0,PONG};
+            DataPayload pong_payload = {DEVICE_ID, DEVICE_TYPE, PONG};
             sendEventToPi(serial_data["i"], pong_payload);
+
             if (DEBUG) {
                 Serial.println("[SERIAL EVENT] - PING");
             }
         } else if ((byte) serial_data["e"] == DEVICES) {
-            DataPayload devices_payload = {0,0,DEVICES};
+            DataPayload devices_payload = {DEVICE_ID, DEVICE_TYPE, DEVICES};
             sendEventToPi(serial_data["i"], devices_payload);
+
             if (DEBUG) {
                 Serial.println("[SERIAL EVENT] - DEVICES");
             }

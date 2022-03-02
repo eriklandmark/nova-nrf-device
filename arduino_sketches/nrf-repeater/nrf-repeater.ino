@@ -11,7 +11,7 @@
 #define DEVICE_ID 2
 #define DEVICE_TYPE REPEATER
 
-#define PING_INTERVAL 30000 // Seconds
+#define PING_INTERVAL 60000 // Seconds
 
 #define NETWORK_CHANNEL 1
 #define NETWORK_SPEED RF24_250KBPS
